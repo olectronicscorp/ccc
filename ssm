@@ -1,0 +1,1282 @@
+--[[
+HPWebcamAble presents...
+Simple Screen Maker
+
+--=== Description ===--
+ComputerCraft Forum Post:
+http://www.computercraft.info/forums2/index.php?/topic/22849-simple-screen-maker
+
+This program allows you to make Screens from my Screen API
+Instead of using code, you 'draw' the screen!
+
+Run 'ssm help' for usages
+Use 'h' to view the controls while in the program
+
+Check out this ComputerCraft Forum Post to see how to use the save file:
+http://www.computercraft.info/forums2/index.php?/topic/22849-simple-screen-maker
+
+
+--=== Installation and Use ===--
+Pastebin Code: sw4PJVPK
+
+To download a file from pastebin, run this command in a computer:
+pastebin get <code> <file name>
+
+
+--=== Update History ===--
+The pastebin will always have the most recent version
+
+|2.3|
+-Better message when loading a file that uses the previous save format
+-Checks to make sure you are using at least CC 1.74
+-Fixed a bunch of typos
+-Cleaned up the code
+-Added a default of each element that can be modifed, new elements will use those properties
+-Changed to key bindings that should be easily reached with only one hand
+-Changed Edit Element screen
+  *Elements can be renamed now
+-Most text boxes and titles should fit on pocket computers now
+  *Let me know if you find one that doesn't
+-Updated how elements save their data to support my Screen API 2.0
+  *Cannot load saves from older versions
+
+|2.2|
+-Added state editing!
+-Cleaned up the code
+-More text shortened to fit on all screens
+-Elements created with the program are compatible with my Screen API again (whoops)
+  *Cannot load saves from older versions
+
+|2.1|
+-Cleaned up the code
+-Updated description
+-Fixed buffer causing anything off the right of the screen to become invisible
+  *Heading text should show up on pocket computers
+  *Objects and click areas show up when they are off the right edge
+-Shortned a lot of text, most should fit on pocket computers
+
+|2.0|
+-Changed a few key bindings
+-Tweaked how elements are created
+-You can now import a background to use for positioning
+-New save file format
+  *Cannot load saves from older versions
+
+|1.1|
+-Cleaned up the code
+-Changed Delete Element options to 'Delete' or 'Cancel'
+-Fixed a few minor bugs
+
+|1.0|
+-Release
+]]
+
+--=== Variables ===--
+
+--Change to suit your preferences (althogh some colors are hardcoded)
+--Note: Key binding can't be changed
+local settings = {
+  background = colors.white,
+  heading = colors.orange,
+  headingText = colors.black,
+  clickAreaBoarder = colors.black,
+  crosshair = colors.lightBlue,
+  cHCenter = colors.black,
+  listBackground = colors.white,
+  listText = colors.black,
+  listTextExitKey = colors.lightGray
+}
+
+--Don't change these if you want to live
+local forumPostLink = "http://www.computercraft.info/forums2/index.php?/topic/22849-simple-screen-maker/#entry213270"
+local screen = {
+  objects = {},
+  clickAreas = {}
+}
+local screenBuffer = {} -- Stores each line of the computer's screen, for the buffer
+local buffer -- Tells the buffer API which lines have changed since the last update to the screen
+local originalTerm = term.current()
+local headingPos = true
+local loadedFileName = ""
+local w,h = term.getSize()
+local defaultHeading = "Press h to view help"
+local mainHeading = defaultHeading
+local selected = {}
+local drawClickAreas = true
+local background
+local backX,backY = 1,1
+local lastClick = {}
+local elementStringType = {
+  ["objects"] = "Object",
+  ["clickAreas"] = "Click Area",
+  ["Click Area"] = "clickAreas",
+  ["Object"] = "objects",
+  ["Objects"] = "objects",
+  ["Click Areas"] = "clickAreas"
+}
+local compColor = { --Complementry colors, to make sure a character can be seen on a specific background color
+  [colors.white] = colors.black,
+  [colors.orange] = colors.black,
+  [colors.magenta] = colors.black,
+  [colors.lightBlue] = colors.black,
+  [colors.yellow] = colors.black,
+  [colors.lime] = colors.black,
+  [colors.pink] = colors.black,
+  [colors.gray] = colors.white,
+  [colors.lightGray] = colors.black,
+  [colors.cyan] = colors.black,
+  [colors.purple] = colors.black,
+  [colors.blue] = colors.black,
+  [colors.brown] = colors.white,
+  [colors.green] = colors.black,
+  [colors.red] = colors.black,
+  [colors.black] = colors.white
+}
+
+local toHex = {
+  [ colors.white ] = "0",
+  [ colors.orange ] = "1",
+  [ colors.magenta ] = "2",
+  [ colors.lightBlue ] = "3",
+  [ colors.yellow ] = "4",
+  [ colors.lime ] = "5",
+  [ colors.pink ] = "6",
+  [ colors.gray ] = "7",
+  [ colors.lightGray ] = "8",
+  [ colors.cyan ] = "9",
+  [ colors.purple ] = "a",
+  [ colors.blue ] = "b",
+  [ colors.brown ] = "c",
+  [ colors.green ] = "d",
+  [ colors.red ] = "e",
+  [ colors.black ] = "f",
+}
+
+local toDecimal = {}
+for a,b in pairs(toHex) do -- Build the toDecimal table as the reverse of the toHex table
+  toDecimal[b] = a
+end
+
+-- Made local for a small speed increase
+local string_rep = string.rep
+local string_sub = string.sub
+
+local default = {
+  objects = {
+    text = nil,
+    name = "Default Object",
+    minX = 1,minY = 1,
+    maxX = 7,maxY = 3,
+    states = {
+      on = {text = colors.white, back = colors.lime},
+      off = {text = colors.white, back = colors.red}
+    },
+    clickable = true,
+    visible = true,
+    state = "off",
+    action = nil
+  },
+  clickAreas = {
+    name = "Default Click Area", 
+    minX = 1,minY = 1,
+    maxX = 5,maxY = 3,
+    clickable = true,
+    action = nil
+  }
+}
+
+--=== Functions ===--
+local function color(text,back)
+  local temp = text and term.setTextColor(text) or nil
+  temp = back and term.setBackgroundColor(back) or nil
+end
+
+local function fillTable(toFill,fillWith) --Used by the API
+  if toFill == nil then toFill = {} end
+  for a,b in pairs(fillWith) do
+    if type(b) == "table" then
+      toFill[a] = fillTable(toFill[a],b)
+    else
+      if toFill[a] == nil then toFill[a] = b end
+    end
+  end
+  return toFill
+end
+
+-- The following functions are part of my Buffer API, modified for this program
+-- http://pastebin.com/LVmgReu6
+local function createLine(backgroundColor)
+  local w,h = term.getSize()
+  local line = {
+    text = string_rep(" " , w),
+    backColor = string_rep( toHex[backgroundColor] , w ),
+    textColor = string_rep( toHex[colors.white] , w )
+  }
+  return line
+end
+
+for i = 1, h do
+  screenBuffer[i] = createLine(settings.background)
+end
+
+local function bufferText(text)
+  local w,h = term.getSize()
+  local curX,curY = term.getCursorPos()
+  if curY > h or curY < 1 or curX > w then return end -- Skip calls above, below, or to the right of the screen
+  if curX < 1 then -- Trim text outside the left of the screen
+	text = string_sub(text,math.abs(curX)+2)
+	curX = 1
+  end
+  local maxX = curX + #text
+  local minX = curX - 1
+ 
+  screenBuffer[curY].text = screenBuffer[curY].text:sub(1,minX)..text..screenBuffer[curY].text:sub(maxX)
+  screenBuffer[curY].textColor = screenBuffer[curY].textColor:sub(1,minX)..string_rep( toHex[term.getTextColor()] ,#text)..screenBuffer[curY].textColor:sub(maxX)
+  screenBuffer[curY].backColor = screenBuffer[curY].backColor:sub(1,minX)..string_rep( toHex[term.getBackgroundColor()] ,#text)..screenBuffer[curY].backColor:sub(maxX)
+ 
+  if not buffer then buffer = {} end
+  buffer[curY] = true
+  term.setCursorPos(maxX-1,curY)
+end
+
+local function writeToScreen()
+  local startX,startY = term.getCursorPos()
+  local w,h = term.getSize()
+  if not buffer then return end
+  for i = 1, h do
+    if buffer[i] then
+      term.setCursorPos(1,i)
+      local line = screenBuffer[i]
+      term.blit(line.text,line.textColor,line.backColor)
+    end
+  end
+  buffer = nil
+  term.setCursorPos(startX,startY)
+end
+
+local function clearScreen()
+  local w,h = term.getSize()
+  local curBack = term.getBackgroundColor()
+  if not buffer then buffer = {} end
+  for i = 1, h do
+    screenBuffer[i] = createLine(curBack)
+    buffer[i] = true
+  end
+end
+
+local function getPixel(y,x)
+  if y > h or y < 1 then return 1 end
+  return toDecimal[string_sub(screenBuffer[y].backColor,x,x)]
+end
+
+--Create new term object that buffers draw calls
+local newTerm = {}
+for a,b in pairs(originalTerm) do
+  newTerm[a] = b
+end
+newTerm.write = function(text)
+  bufferText(text)
+end
+newTerm.clear = function()
+  clearScreen()
+end
+newTerm.blit = function(...)
+  error("Cannot blit")
+end
+newTerm.clearLine = function(...)
+  error("Cannot clearLine")
+end
+-- End Buffer API
+
+local function typeToString(sType)
+  return elementStringType[sType]
+end
+
+local function stringToType(sString)
+  return elementStringType[sString]
+end
+
+local function scrollRead(x,y,nLength,sInsertText,sWhitelist,sBlacklist) --This is a simple scrolling-read function I made
+  local cPos,input = 1,""
+  if sInsertText then
+    cPos,input = #tostring(sInsertText)+1,tostring(sInsertText)
+  end
+  term.setCursorBlink(true)
+  while true do
+    term.setCursorPos(x,y)
+    term.write(string.rep(" ",nLength))
+    term.setCursorPos(x,y)
+    if string.len(input) > nLength-1 then
+      term.write(string.sub(input,(nLength-1)*-1))
+    else
+      term.write(input)
+    end
+    local event,p1 = os.pullEvent()
+    if event == "char" and (not sWhitelist or string.find(sWhitelist,p1)) and (not sBlacklist or not string.find(sBlacklist,p1)) then
+      input = string.sub(input,1,cPos)..p1
+      cPos = cPos + 1                  
+    elseif event == "key" then
+      if p1 == keys.enter then
+        term.setCursorBlink(false)
+        return input
+      elseif p1 == keys.backspace then
+        if cPos > 1 then
+          input = string.sub(input,1,cPos-2)..string.sub(input,cPos)
+          cPos = cPos - 1
+        end
+      end    
+    end
+  end
+end
+
+local function printC(text,y)
+  if type(text) ~= "string" or type(y) ~= "number" then error("expected string,number, got "..type(text)..","..type(y),2) end
+  local lenght = #text
+  local start = math.floor((w-lenght)/2)+1
+  term.setCursorPos(start,y)
+  term.write(text)
+  return start,start+lenght
+end
+
+local function getHeadingY()
+  local pos = { [true] = 1, [false] = h }
+  return pos[headingPos]
+end
+
+local function drawHeading(text,forcePos)
+  local pos = { [true] = 1, [false] = h }
+  color(settings.headingText,settings.heading)
+  term.setCursorPos(1,pos[forcePos or headingPos])
+  term.write(string.rep(" ",w))
+  printC(text,pos[forcePos or headingPos])
+end
+
+local function waitForKey(key)
+  repeat
+    local event,pKey = os.pullEvent("key")
+  until pKey == key
+end
+
+local function getInput(heading,requireText,insertText,setPadding,whitelist,blacklist)
+  os.startTimer(0.1) os.pullEvent()
+  local minY = 6
+  local padding = setPadding or 2
+  heading = tostring(heading) or "Enter some text"
+  local minX = math.floor(w/2)-math.ceil((#heading+padding*2)/2)
+  term.setCursorPos(minX,minY) color(colors.black,colors.orange)
+  term.write(string.rep(" ",padding)..heading..string.rep(" ",padding))
+  color(nil,colors.lightGray)
+  for i = 1, 3 do
+    term.setCursorPos(minX,minY+i)
+    term.write(string.rep(" ",#heading+padding*2))
+  end
+  color(colors.white,colors.black)
+  local lenght = #heading+padding*2-4
+  local sInput = scrollRead(minX+2,minY+2,lenght,insertText,whitelist,blacklist)
+  while sInput == "" and requireText do
+    sInput = scrollRead(minX+2,minY+2,lenght,nil,whitelist,blacklist)
+  end
+  return sInput
+end
+
+local function getNum(heading,insertNum)
+  return tonumber(getInput(heading,true,insertNum,nil,"1234567890"))  
+end
+
+local function option(heading,choices,choiceColors,setPadding)
+  os.startTimer(0.1)
+  os.pullEvent()
+  heading = tostring(heading) or "Select an option"
+  local choiceWidth = 0
+  for i = 1, #choices do
+    if #choices[i] > choiceWidth then
+      choiceWidth = #choices[i]
+    end
+  end
+  choiceWidth = choiceWidth + 2
+  local minY = 5
+  local padding = setPadding or (choiceWidth-#heading+2*2)/2
+  if padding < 0 then padding = 2 end
+  local minX = math.floor((w-(#heading+padding*2))/2)+1
+  term.setCursorPos(minX,minY)
+  color(colors.black,colors.orange)
+  term.write(string.rep(" ",math.floor(padding))..heading..string.rep(" ",math.ceil(padding)))
+  color(nil,colors.lightGray)
+  for i = 1, #choices*2+1 do
+    term.setCursorPos(minX,minY+i)
+    term.write(string.rep(" ",#heading+padding*2))
+  end
+  local choicePos = {}
+  local pos = 1
+  color(colors.white,colors.lime)
+  for i = 1, #choices do
+    local toWrite = string.rep(" ",math.floor((choiceWidth-#choices[i])/2))..choices[i]..string.rep(" ",math.ceil((choiceWidth-#choices[i])/2))
+    if choiceColors and choiceColors[i] then
+      color(choiceColors[i][1],choiceColors[i][2])
+    else
+      color(colors.white,colors.lime)
+    end
+    printC(toWrite,minY+1+pos)
+    choicePos[minY+1+pos] = choices[i]
+    pos = pos+2
+  end
+  while true do
+    local eArgs = {os.pullEvent("mouse_click")}
+    if choicePos[eArgs[4]] then
+      return choicePos[eArgs[4]]
+    end
+  end
+end
+
+local function getColor(heading)
+  local minY,padding,numColors = 6,1,16
+  local colorPadding = 2
+  heading = heading==nil and "Select a color" or tostring(heading)
+  
+  if #heading+padding*2 < 16+colorPadding*2 then
+    padding = (16+colorPadding*2-#heading+padding*2)/2
+  end
+  color(colors.black,colors.orange)
+  printC(string.rep(" ",math.floor(padding))..heading..string.rep(" ",math.ceil(padding)),minY)
+  color(nil,colors.lightGray)
+  for i = 1, 3 do
+    printC(string.rep(" ",#heading+padding*2),minY+i)
+  end
+  local minColorPos = math.floor((w-numColors)/2)+1
+  
+  term.setCursorPos(minColorPos,minY+2)
+  local curColor,colorPos = 1,{}
+  for i = 1, numColors do
+    colorPos[minColorPos+i-1] = curColor
+    term.setBackgroundColor(curColor) term.write(" ")
+    curColor = 2^i
+  end
+  while true do
+    local eArgs = {os.pullEvent("mouse_click")}
+    if eArgs[4] == minY+2 and eArgs[3] >= minColorPos and eArgs[3] <= minColorPos+(numColors-1) then
+      return colorPos[eArgs[3]]
+    end
+  end
+end
+
+local function drawObject(objData)
+  color(objData.states[objData.state].text,objData.states[objData.state].back)
+  for y = 0, objData.maxY-objData.minY do
+    term.setCursorPos(objData.minX,objData.minY+y)
+    term.write(string.rep(" ",objData.maxX-objData.minX+1))
+  end
+  if objData.text then
+    local xPos = objData.minX+math.floor(((objData.maxX-objData.minX+1)-#objData.text)/2)
+    local yPos = objData.minY+(objData.maxY-objData.minY)/2
+    term.setCursorPos(xPos,yPos)
+    term.write(objData.text)
+  end
+end
+
+local function drawClickArea(data)
+  term.setCursorPos(data.minX,data.minY)
+  color(compColor[getPixel(data.minY,data.minX)],getPixel(data.minY,data.minX))
+  term.write("+")
+  term.setCursorPos(data.minX,data.maxY)
+  color(compColor[getPixel(data.maxY,data.minX)],getPixel(data.maxY,data.minX))
+  term.write("+")
+  term.setCursorPos(data.maxX,data.minY)
+  color(compColor[getPixel(data.minY,data.maxX)],getPixel(data.minY,data.maxX))
+  term.write("+")
+  term.setCursorPos(data.maxX,data.maxY)
+  color(compColor[getPixel(data.maxY,data.maxX)],getPixel(data.maxY,data.maxX))
+  term.write("+")
+  for x = 1, data.maxX-data.minX-1 do --draw top and bottom
+    term.setCursorPos(data.minX+x,data.minY)
+    color(compColor[getPixel(data.minY,data.minX+x)],getPixel(data.minY,data.minX+x))
+    term.write("-")
+    term.setCursorPos(data.minX+x,data.maxY)
+    color(compColor[getPixel(data.maxY,data.minX+x)],getPixel(data.maxY,data.minX+x))
+    term.write("-")
+  end
+  for y = 1, data.maxY-data.minY-1 do --Right and left side
+    term.setCursorPos(data.minX,data.minY+y)
+    color(compColor[getPixel(data.minY+y,data.minX)],getPixel(data.minY+y,data.minX))
+    term.write("|")
+    color(compColor[getPixel(data.minY+y,data.maxX)],getPixel(data.minY+y,data.maxX))
+    term.setCursorPos(data.maxX,data.minY+y)
+    term.write("|")
+  end
+end
+
+function checkPos(x,y,onlyAcceptObjects)
+  local insideArea = {}
+  if not onlyAcceptObjects then
+    for name,data in pairs(screen.clickAreas) do
+      if x >= data.minX and x <= data.maxX and y >= data.minY and y <= data.maxY then
+        table.insert(insideArea,{"clickAreas","Click Area",name})
+      end
+    end
+  end
+  for name,data in pairs(screen.objects) do
+    if x >= data.minX and x <= data.maxX and y >= data.minY and y <= data.maxY then
+      table.insert(insideArea,{"objects","Object",name})
+    end
+  end
+  return insideArea
+end
+
+local function redrawScreen(heading)
+  color(colors.black,settings.background)
+  clearScreen()
+  term.redirect(newTerm)
+  if type(background) == "table" then
+    paintutils.drawImage(background,backX,backY)
+  end
+  for a,b in pairs(screen.objects) do --Draw objects
+    drawObject(b)
+  end
+  if drawClickAreas then --Draw Click Areas
+    for name,data in pairs(screen.clickAreas) do
+      drawClickArea(data)
+    end
+  end
+  if #selected > 0 then --Draw x's on selected element
+    local data = screen[selected[1]][selected[2]]
+    color(settings.crosshair,settings.cHCenter)
+    term.setCursorPos(data.minX,data.minY) term.write("X")
+    term.setCursorPos(data.minX,data.maxY) term.write("X")
+    term.setCursorPos(data.maxX,data.minY) term.write("X")
+    term.setCursorPos(data.maxX,data.maxY) term.write("R")
+  end
+  if heading then
+    mainHeading = heading
+  end
+  drawHeading(mainHeading)
+  term.redirect(originalTerm)
+  writeToScreen()
+end
+
+local function getNames(sType)
+  local names = {}
+  for a,b in pairs(screen[sType]) do
+    table.insert(names,a)
+  end
+  return names
+end
+
+local function displayList(heading,elements,options,key)
+  local listTop = 3
+  local listBottom = h-1
+  local listLeft = 2
+  local dispExitKey = 2
+  local perPage = listBottom-listTop
+  local page = 1
+  local pages
+  local optionWidth = 0
+  local tLines = {}
+  if options then
+    for i = 1, #options do
+      optionWidth = optionWidth+(#options[i][1])+1
+    end
+  end
+  
+  local function refreshElements()
+    tLines = {}
+    for a = 1, #elements do
+      if elements[a][1] ~= false then
+        table.insert(tLines,{elements[a][1],false})
+      end
+      local curElements
+      if type(elements[a][2]) == "function" then
+        curElements = elements[a][2](unpack(elements[a][3]))
+      else
+        curElements = elements[a][2]
+      end
+      for b = 1, #curElements do
+        table.insert(tLines,{"  "..curElements[b],true,elements[a][1]})
+      end
+      table.insert(tLines,{" ",false})
+    end
+    pages = math.ceil(#tLines/perPage)
+    page = page<=pages and page or pages
+  end
+  
+  local function redrawList()
+    color(settings.listText,settings.listBackground)
+    term.clear()
+    drawHeading(heading or "List",true)
+    for i = 1, #tLines do
+      local cur = i+perPage*(page-1)
+      if i > perPage or cur > #tLines then break end
+      color(settings.listText,settings.listBackground)
+      term.setCursorPos(listLeft,listTop+i-1)
+      term.write(tLines[cur][1])
+      term.setCursorPos(w-optionWidth,listTop+i-1)
+      if options and tLines[cur][2] then
+        for i = 1, #options do
+          color(options[i][2] or colors.white, options[i][3] or colors.lightBlue)
+          term.write(options[i][1])
+          color(nil,settings.listBackground)
+          term.write(" ")
+        end
+      end
+    end
+    color(settings.listText,settings.listBackground)
+    printC("Page "..page.." out of "..pages,h)
+    color(settings.listTextExitKey,nil)
+    printC(keys.getName(key).." to exit",dispExitKey)
+  end
+  
+  refreshElements()
+  redrawList()
+  while true do
+    local eArgs = {os.pullEvent()}
+    if eArgs[1] == "key" then
+      if eArgs[2] == key then
+        return
+      elseif eArgs[2] == keys.up then
+        if page > 1 then 
+          page = page-1
+          redrawList()
+        end
+      elseif eArgs[2] == keys.down then
+        if page < pages then 
+          page = page+1
+          redrawList()
+        end
+      elseif eArgs[2] == keys.left then
+        if page > 1 then 
+          page = page-1
+          redrawList()
+        end
+      elseif eArgs[2] == keys.right then
+        if page < pages then 
+          page = page+1
+          redrawList()
+        end
+      end
+    elseif eArgs[1] == "mouse_click" and options then
+      if eArgs[4] >= listTop and eArgs[4]-listTop < #tLines+perPage*(page-1) and eArgs[3] >= w-optionWidth and eArgs[3] <= w-2 then
+        local totalWidth = 0
+        for i = 1, #options do
+          if eArgs[3] >= w-optionWidth+totalWidth and eArgs[3] < w-optionWidth+totalWidth+#options[i][1] then
+            local result = options[i][4](tLines[(eArgs[4]-listTop+1)+perPage*(page-1)][1]:sub(3),unpack(options[i][5]),tLines[(eArgs[4]-listTop+1)+perPage*(page-1)][3])
+            if result then
+              return result
+            end
+            refreshElements()
+            redrawList()
+          end
+          totalWidth = totalWidth+#options[i][1]+1
+        end
+      end
+    elseif eArgs[1] == "mouse_scroll" then
+      if eArgs[2] > 0 then --Scroll up
+        if page > 1 then 
+          page = page-1
+          redrawList()
+        end
+      else -- Scroll down
+        if page < pages then 
+          page = page+1
+          redrawList()
+        end
+      end
+    end
+  end
+end
+
+local function drawHelp()
+  displayList( "Help", {
+    {"Help",{"h - Toggle Help (This screen)"}},
+    {"General",{
+      "x - Switch heading position",
+      "z - Change background",
+      "w - Edit default",
+      "q - Save and Exit"
+    }},
+    {"Elements",{
+      "c - Create new Element",
+      "s - Hide/Show Click Area Borders",
+      "a - View list of all Elements",
+      "Left Click - Select Element",
+      "Right Click - Edit Element"
+    }},
+    {"While an Element is selected",{
+      "d - Delete selected Element",
+      "e - Edit Element",
+      "Arrow keys/Drag Center - Move",
+      "Drag 'R' - Resize"
+    }}
+  }, nil, keys.h)
+end
+
+local function deleteElement(name,sType)
+  if option("Delete '"..name.."'?",{"Delete","Cancel"},{{colors.white,colors.red}}) == "Delete" then
+    screen[sType][name] = nil
+    return true
+  end
+  return false
+end
+
+local function editElementStates(object)
+  local listTop = 3
+  local listBottom = h-1
+  local listLeft = 2
+  local listRight = w-1
+  local optionWidth = 0
+  local numStates = {}
+  local states = object.states
+  
+  local function redrawStatesScreen()
+    color(settings.listText,settings.listBackground)
+    term.clear()
+    drawHeading("Edit States",true)
+    local i = 1
+    numStates = {}
+    for a,b in pairs(states) do
+      if a == object.state then
+        term.setCursorPos(1,listTop+i-1) color(colors.lightBlue,settings.listBackground) term.write("*")
+      end
+      color(settings.listText,settings.listBackground)
+      term.setCursorPos(listLeft,listTop+i-1)
+      term.write(a)
+      term.setCursorPos(listRight-(#"[  ] [  ]")+1,listTop+i-1)
+      term.write("[") color(nil,b.text) term.write("  ") color(nil,settings.listBackground) term.write("] ")
+      term.write("[") color(nil,b.back) term.write("  ") color(nil,settings.listBackground) term.write("]")
+      numStates[i] = a
+      i = i+1
+    end
+    term.setCursorPos(listLeft,listTop-1) color(colors.lightGray) term.write("Name")
+    term.setCursorPos(listRight-(#"[Text] [Back]")+1,listTop-1) term.write("[Text] [Back]")
+    color(colors.lightGray,colors.white) printC("Enter to save",h)
+    if #numStates < listBottom-listTop then
+      printC("Right click to select",h-1)
+      color(colors.white,colors.lime) printC("New State",listTop+i-1)
+    else
+      printC("Max states!",h-1)
+    end
+  end
+    
+  redrawStatesScreen()
+  
+  while true do
+    local eArgs = {os.pullEvent()}
+    if eArgs[1] == "key" then
+      if eArgs[2] == keys.enter then
+        return
+      end
+    elseif eArgs[1] == "mouse_click" then
+      if eArgs[4] >= listTop and eArgs[4]-listTop < #numStates then -- clicked a state
+        local curName = numStates[(eArgs[4]-listTop+1)]
+        if eArgs[2] == 1 then -- left click, edit
+          local choice = option("Edit "..curName,{"Rename","Change Text","Change Back","Delete","Cancel"},{{},{},{},{nil,colors.red},{nil,colors.red}})
+          redrawStatesScreen()
+          if choice == "Rename" then
+            local name = getInput("Rename State",true,curName)
+            if name ~= curName then
+              while states[name] ~= nil do
+                name = getInput("That state exists",true,name)
+              end
+              states[name] = states[curName]
+              states[curName] = nil
+              object.state = object.state==curName and name or object.state -- Change current state if necesarry
+            end
+          elseif choice == "Change Text" then
+            states[curName].text = getColor("Change Text")
+          elseif choice == "Change Back" then
+            states[curName].back = getColor("Change Back")
+          elseif choice == "Delete" then
+            if option("Delete "..curName.."?",{"Yes","No"},{{},{nil,colors.red}}) == "Yes" then
+              if #numStates == 1 then
+                redrawStatesScreen()
+                option("Can't delete last state!",{"Ok"})
+              else
+                states[curName] = nil
+                object.state = object.state==curName and numStates[1] or object.state -- Change current state if necesarry
+              end
+            end
+          end
+        elseif eArgs[2] == 2 then -- right click, select as default
+          object.state = curName
+        end
+        redrawStatesScreen()
+      elseif eArgs[4] == #numStates+listTop and #numStates < listBottom-listTop then -- Add state
+        local name = getInput("Create State",true)
+        while states[name] ~= nil do
+          name = getInput("That state exists",true,name)
+        end
+        states[name] = {
+          text = getColor("Select Text Color"),
+          back = getColor("Select Back Color")
+        }
+        redrawStatesScreen()
+      end
+    end
+  end
+end
+
+local function editElement(name,sType,data,disableNameEdit)
+  local left,right,top,bottom = 2,w-1,3,h-1
+  local saveKey,dispSaveKey = keys.enter,h
+  local curLine = top
+  data = data or screen[sType][name]
+  
+  local function drawText(name,text,textColor,canEdit,editText)
+    term.setCursorPos(left,curLine) color(colors.lightGray,colors.white) if name then term.write(name..":") end
+    color(textColor or colors.black) term.write(text)
+    if canEdit then
+      term.setCursorPos(right-#tostring(editText or "Edit")+1,curLine) color(colors.white,colors.lightBlue) term.write(editText or "Edit")
+    end
+    curLine=curLine + 1
+  end
+  
+  local function redrawEditScreen()
+    curLine = top
+    color(colors.black,colors.white) term.clear()
+    drawHeading("Edit Element",true)
+    color(colors.lightGray,colors.white) printC("Press Enter to save",dispSaveKey)
+    
+    drawText("Name",name,nil,not disableNameEdit)
+    drawText("Type",typeToString(sType))
+    drawText("Points","",nil,true)
+    drawText(nil,"("..data.minX..","..data.minY.."),("..data.maxX..","..data.maxY..")")
+    
+    if sType == "objects" then
+      curLine = curLine+1 drawText("Text",data.text or "None",data.text and colors.black or colors.lightGray,true)
+      curLine = curLine+1 drawText("Clickable",tostring(data.clickable),data.clickable and colors.lime or colors.red,true,"Toggle")
+      curLine = curLine+1 drawText("Visible",tostring(data.visible),data.visible and colors.lime or colors.red,true,"Toggle")
+      local numStates = 0
+      for a,b in pairs(data.states) do numStates = numStates + 1 end
+      curLine = curLine+1 drawText("States",numStates,nil,true)
+    end
+  end
+  
+  redrawEditScreen()
+  while true do
+    local eArgs = {os.pullEvent()}
+    if eArgs[1] == "mouse_click" then
+      if eArgs[4] == top and not disableNameEdit then --Name
+        local input = getInput("Change Name",true,name)
+        if input ~= name then
+          while screen[sType][input] ~= nil do
+            input = getInput("Already exists!",true,input)
+          end
+          screen[sType][input] = screen[sType][name]
+          screen[sType][name] = nil
+          name = input
+          selected = {}
+          redrawScreen(defaultHeading)
+        end
+        redrawEditScreen()
+      elseif eArgs[4] == top+2 then --Edit points
+        data.minX = getNum("Enter Point 1 x",data.minX)
+        data.minY = getNum("Enter Point 1 y",data.minY)
+        data.maxX = getNum("Enter Point 2 x",data.maxX)
+        data.maxY = getNum("Enter Point 2 y",data.maxY)
+        if data.maxY < data.minY then
+          local temp = data.maxY
+          data.maxY = data.minY
+          data.minY = temp
+        end
+        if data.maxX < data.minX then
+          local temp = data.maxX
+          data.maxX = data.minX
+          data.minX = temp
+        end
+        redrawEditScreen()
+      elseif sType == "objects" then
+        if eArgs[4] == top+5 then --Edit text
+          local input
+          if data.text then --Has text
+            input = option("Edit Text",{"Edit","Delete","Cancel"},{{},{nil,colors.red},{nil,colors.red}})
+            redrawEditScreen()
+            if input == "Edit" then
+              data.text = getInput("Edit Text",true,data.text)
+            elseif input == "Delete" then
+              data.text = nil
+            end
+          else --No text set
+            data.text = getInput("Edit Text",true)
+          end
+          redrawEditScreen()
+        elseif eArgs[4] == top+7 then --Toggle clickable
+          data.clickable = not data.clickable
+          redrawEditScreen()
+        elseif eArgs[4] == top+9 then --Toggle visible
+          data.visible = not data.visible
+          redrawEditScreen()
+        elseif eArgs[4] == top+11 then --Edit states
+          editElementStates(data)
+          redrawEditScreen()
+        end
+      end
+    elseif eArgs[1] == "key" and eArgs[2] == saveKey then
+      return
+    end
+  end
+end
+
+local function newElement()
+  local element = {}
+  local sType = option("Create... ",{"Object","Click Area","Cancel"},{{},{},{nil,colors.red}})
+  redrawScreen()
+
+  if sType == "Cancel" then
+    redrawScreen()
+    return
+  end
+
+  element.name = getInput("  Enter "..sType.." name:  ",true)
+  while screen[stringToType(sType)][element.name] do
+    element.name = getInput(" That "..sType.." exists: ",true)
+  end
+  
+  fillTable(element,default[stringToType(sType)])
+  
+  redrawScreen("Click and drag to create")
+  while true do --Get positions of element
+    local eArgs = {os.pullEvent("mouse_click")}
+    if eArgs[4] ~= getHeadingY() then
+      element.minX = eArgs[3]
+      element.minY = eArgs[4]
+      element.maxX = eArgs[3]
+      element.maxY = eArgs[4]
+      selected = {stringToType(sType),element.name}
+      lastClick = {true,eArgs[3],eArgs[4]}
+      screen[stringToType(sType)][element.name] = element
+      redrawScreen(sType.." "..element.name)
+      return
+    end
+  end
+end
+
+local function load(path)
+  if not fs.exists(path) then
+    printError("That path doesn't exist")
+    return false
+  elseif fs.isDir(path) then
+    printError("That's a directory!")
+    return false
+  end
+  print("Attempting to load from path...")
+  local env = {
+    addClickArea = function(data) screen.clickAreas[data.name] = data end,
+    addObject = function(data) if data.states == nil or data.visible == nil then error("This file uses an old save format!") end screen.objects[data.name] = data end
+  }
+  setmetatable(env, {__index = function() return function() end end})
+  
+  local func, err = loadfile(path,env)
+  if err then
+    printError("Unable to load: "..(err~="" and err or "Unknown Cause"))
+    return false
+  end
+  local state,err = pcall(func)
+  if not state then
+    printError("Unable to load: "..(err~=nil and err or "Unknown Cause"))
+    return false
+  end
+  loadedFileName = path
+  return true
+end
+
+local function save()
+  redrawScreen()
+  local fPath = getInput("Enter path for file",true,loadedFileName)
+  while fs.exists(fPath) and not path == loadedFileName do
+    fPath = getInput("That path already exists",true,fPath)
+  end
+  redrawScreen()
+  local f = fs.open(fPath,"w")
+  if not f then option("Unable to open path",{"Ok"}) return false end
+  f.writeLine("--[[")
+  f.writeLine("Created with HPWebcamAble's Simple Screen Maker")
+  f.writeLine("More info here: "..forumPostLink)
+  f.writeLine("]]")
+  local function serialize(tbl)
+    return textutils.serialize(tbl):gsub("\n"," "):gsub(" ","") -- Remove the newlines
+  end
+  local function saveElements(elements,funcName)
+    for name,data in pairs(elements) do
+      local saveString = funcName.."({"
+      for key,value in pairs(data) do
+        if key == "name" then
+          saveString = saveString.."name="..[["]]..value..[[", ]]
+        else
+          saveString = saveString..key.."="
+          if type(value) == "string" then
+            saveString = saveString..[["]]..tostring(value)..[[", ]]
+          elseif type(value) == "table" then
+            saveString = saveString..serialize(value)..", "
+          else
+            saveString = saveString..tostring(value)..", "
+          end
+        end
+      end
+      f.writeLine(saveString.."})")
+    end
+  end
+  saveElements(screen.objects,"addObject")
+  saveElements(screen.clickAreas,"addClickArea")
+  
+  f.close()
+  return true
+end
+
+
+--=== Program ===--
+local args = {...}
+if not term.isColor() then
+  printError("This program requires an Advanced Computer")
+  return
+elseif not _CC_VERSION and not _HOST then
+  printError("This program requires ComputerCraft 1.74 or newer")
+  return
+elseif args[1] == "help" then
+  print("Simple Screen Maker")
+  print("This program lets you quickly create 'screens' from HPWebcamAble's Screen API")
+  print()
+  print("Usages:")
+  print(shell.getRunningProgram())
+  print("  Create a new Screen Object")
+  print(shell.getRunningProgram().." <file path to load>")
+  print("  Load an existing Screen Object")
+  print()
+  print("Need help using the program? Check out the documentation:")
+  print(forumPostLink)
+  return
+elseif args[1] then
+  if not load(args[1]) then
+    return
+  end
+end
+
+
+local function main()
+  redrawScreen()
+  while true do
+    local eArgs = {os.pullEvent()}
+    if eArgs[1] == "mouse_click" then --Click the mouse
+      local elements = checkPos(eArgs[3],eArgs[4])
+      if #selected > 0 then --Something is selected
+        if #elements > 1 then --Multiple things clicked
+          local objects = {}
+          local clickAreas = {}
+          for i = 1, #elements do
+            if elements[i][1] == "clickAreas" then
+              table.insert(clickAreas,elements[i][3])
+            else
+              table.insert(objects,elements[i][3])
+            end
+          end
+          local toSelect = displayList("Multiple Elements clicked",{{"Objects",function() return objects end,{}},{"Click Areas",function() return clickAreas end,{}}},{{"Select",nil,nil,function(name,temp,sType) return {name,sType} end,{}}},keys.enter)
+          if toSelect then
+            selected = {stringToType(toSelect[2]),toSelect[1]}
+          end
+          redrawScreen(toSelect and typeToString(stringToType(toSelect[2])).." "..toSelect[1] or nil)
+        elseif #elements == 1 then --Only 1 element clicked
+          if elements[1][3] == selected[2] and elements[1][1] == typeToString(selected[1]) then --Click in the selected element
+            if eArgs[2] == 1 then --Left Click
+              lastClick = {eArgs[3] == screen[selected[1]][selected[2]].maxX and eArgs[4] == screen[selected[1]][selected[2]].maxY,eArgs[3],eArgs[4]}
+            elseif eArgs[2] == 2 then --Right Click
+              editElement(selected[2],selected[1])
+              redrawScreen()
+            end
+          else --Click is outside of currently selected element            
+            selected = {elements[1][1],elements[1][3]}
+            if eArgs[2] == 1 then --Left Click  
+              lastClick = {eArgs[3] == screen[selected[1]][selected[2]].maxX and eArgs[4] == screen[selected[1]][selected[2]].maxY,eArgs[3],eArgs[4]}
+              redrawScreen(elements[1][2].." "..elements[1][3])
+            elseif eArgs[2] == 2 then --Right Click
+              editElement(selected[2],selected[1])
+              redrawScreen()
+            end            
+          end
+        else --Nothing clicked
+          selected = {}
+          lastClick = {}
+          redrawScreen(defaultHeading)
+        end
+      else --Nothing is selected
+        if #elements > 1 then --Multiple things clicked
+          local objects = {}
+          local clickAreas = {}
+          for i = 1, #elements do
+            if elements[i][1] == "clickAreas" then
+              table.insert(clickAreas,elements[i][3])
+            else
+              table.insert(objects,elements[i][3])
+            end
+          end
+          local toSelect = displayList("Multiple Elements clicked",{{"Objects",function() return objects end,{}},{"Click Areas",function() return clickAreas end,{}}},{{"Select",nil,nil,function(name,temp,sType) return {name,sType} end,{}}},keys.enter)
+          if toSelect then
+            selected = {stringToType(toSelect[2]),toSelect[1]}
+          end
+          redrawScreen(toSelect and typeToString(stringToType(toSelect[2])).." "..toSelect[1] or nil)
+        elseif #elements == 1 then --Only 1 element clicked
+          selected = {elements[1][1],elements[1][3]}
+          if eArgs[2] == 1 then --Left Click
+            lastClick = {eArgs[3] == screen[selected[1]][selected[2]].maxX and eArgs[4] == screen[selected[1]][selected[2]].maxY,eArgs[3],eArgs[4]}
+            redrawScreen(elements[1][2].." "..elements[1][3])
+          elseif eArgs[2] == 2 then --Right Click
+            editElement(selected[2],selected[1])
+            redrawScreen()
+          end
+        end
+      end
+    elseif eArgs[1] == "key" then --Key hit
+      if eArgs[2] == keys.h then --Show help screen
+        drawHelp()
+        redrawScreen()
+      elseif eArgs[2] == keys.e then --Edit an object
+        if #selected > 0 then
+          editElement(selected[2],selected[1])
+        end
+        redrawScreen()
+      elseif eArgs[2] == keys.q then --Exit program
+        local choice = option("Exit SSM",{"Save and exit","Exit without saving","Cancel"},{{nil,nil},{nil,colors.red},{nil,colors.red}})
+        if choice == "Save and exit" then --Save and exit
+          if save() then
+            return
+          else
+            redrawScreen()
+          end
+        elseif choice == "Exit without saving" then --Dont save
+          return
+        end
+        redrawScreen()
+      elseif eArgs[2] == keys.z then --Change background
+        local choice
+        if background then
+          choice = option("Change Background",{"Change solid color","Move Paint Image","Clear Paint Image","Cancel"},{{nil,nil},{nil,nil},{nil,colors.red},{nil,colors.red}})
+        else
+          choice = option("Change Background",{"Change solid color","Load Paint File","Cancel"},{{nil,nil},{nil,nil},{nil,colors.red}})
+        end
+        redrawScreen()
+        
+        if choice == "Change solid color" then
+          settings.background = getColor("Select Color")
+        elseif choice == "Move Paint Image" then
+          redrawScreen("Arrow keys to move image")
+          while true do
+            local event = {os.pullEvent("key")}
+            if event[2] == keys.up then
+              backY = backY-1
+              redrawScreen("Hit Enter to confirm")
+            elseif event[2] == keys.down then
+              backY = backY+1
+              redrawScreen("Hit Enter to confirm")
+            elseif event[2] == keys.left then
+              backX = backX-1
+              redrawScreen("Hit Enter to confirm")
+            elseif event[2] == keys.right then
+              backX = backX+1
+              redrawScreen("Hit Enter to confirm")
+            elseif event[2] == keys.enter then
+              redrawScreen(defaultHeading)
+              break
+            end
+          end
+        elseif choice == "Clear Paint Image" then
+          background = nil
+        elseif choice == "Load Paint File" then
+          local input = shell.resolve( getInput("Enter File Path",true) )
+          redrawScreen()
+          if fs.exists(input) and not fs.isDir(input) then
+            background = paintutils.loadImage(input)
+            backX,backY = 1,1
+            if type(background) ~= "table" then
+              option("Not a valid Paint File",{"Ok"})
+              background = nil
+            end
+          else
+            option("Not a valid Paint File",{"Ok"})
+          end
+        end
+        
+        redrawScreen()
+      elseif eArgs[2] == keys.x then --Move the heading
+        headingPos = not headingPos
+        redrawScreen()
+      elseif eArgs[2] == keys.c then --Make a new object/click area
+        newElement()
+        --newElement redraws the screen
+      elseif eArgs[2] == keys.s then --Toggle Click area visibility
+        drawClickAreas = not drawClickAreas
+        redrawScreen("Click Areas are ".. (drawClickAreas and "" or "not") .." visible")
+      elseif eArgs[2] == keys.a then --Element list
+        local heading
+        local sType
+        if option("View list of...",{"Objects","Click Areas"}) == "Objects" then
+          heading = "Objects"
+          sType = "objects"
+        else
+          heading = "Click Areas"
+          sType = "clickAreas"
+        end
+        displayList(heading,{{false,getNames,{sType}}},{{"Edit",nil,nil,editElement,{sType}},{"Delete",nil,colors.red,deleteElement,{sType}}},keys.enter)
+        redrawScreen()
+      elseif eArgs[2] == keys.w then
+        local choice = option("Edit default",{"Object","Click Area","Cancel"},{{},{},{nil,colors.red}})
+        if choice ~= "Cancel" then
+          editElement("Default "..choice,stringToType(choice),default[stringToType(choice)],true)
+        end
+        redrawScreen()
+      elseif #selected > 0 then --Key hit while somthing was selected
+        if eArgs[2] == keys.right then --move right
+          screen[selected[1]][selected[2]].minX = screen[selected[1]][selected[2]].minX+1
+          screen[selected[1]][selected[2]].maxX = screen[selected[1]][selected[2]].maxX+1
+          redrawScreen()
+        elseif eArgs[2] == keys.left then --move left
+          screen[selected[1]][selected[2]].minX = screen[selected[1]][selected[2]].minX-1
+          screen[selected[1]][selected[2]].maxX = screen[selected[1]][selected[2]].maxX-1
+          redrawScreen()
+        elseif eArgs[2] == keys.up then --move up
+          screen[selected[1]][selected[2]].minY = screen[selected[1]][selected[2]].minY-1
+          screen[selected[1]][selected[2]].maxY = screen[selected[1]][selected[2]].maxY-1
+          redrawScreen()
+        elseif eArgs[2] == keys.down then --move down
+          screen[selected[1]][selected[2]].minY = screen[selected[1]][selected[2]].minY+1
+          screen[selected[1]][selected[2]].maxY = screen[selected[1]][selected[2]].maxY+1
+          redrawScreen()
+        elseif eArgs[2] == keys.d then --delete
+          local result = deleteElement(selected[2],selected[1])
+          if result then
+            selected = {}
+          end
+          redrawScreen(result and defaultHeading or nil)
+        end        
+      end
+    elseif eArgs[1] == "mouse_drag" then --Mouse was dragged
+      if #selected > 0 and #lastClick > 0 then --Is able to drag
+        if lastClick[1] then --resize
+          if eArgs[3] >= screen[selected[1]][selected[2]].minX then
+            screen[selected[1]][selected[2]].maxX = eArgs[3]
+          end
+          if eArgs[4] >= screen[selected[1]][selected[2]].minY then
+            screen[selected[1]][selected[2]].maxY = eArgs[4]
+          end
+        else --Move
+          screen[selected[1]][selected[2]].minY = screen[selected[1]][selected[2]].minY-(lastClick[3]-eArgs[4])
+          screen[selected[1]][selected[2]].maxY = screen[selected[1]][selected[2]].maxY-(lastClick[3]-eArgs[4])
+          screen[selected[1]][selected[2]].minX = screen[selected[1]][selected[2]].minX-(lastClick[2]-eArgs[3])
+          screen[selected[1]][selected[2]].maxX = screen[selected[1]][selected[2]].maxX-(lastClick[2]-eArgs[3])
+          lastClick[2] = eArgs[3]
+          lastClick[3] = eArgs[4]
+        end
+        redrawScreen()
+      end
+    end
+  end
+end
+
+local state,err = pcall(main) -- Run the actual program
+
+if err and not err:find("Terminated") then
+  term.redirect(originalTerm)
+  color(colors.white,colors.black)
+  term.clear()
+  printC("An error occured:",1)
+  term.setCursorPos(1,3)
+  print(err)
+else
+  color(colors.white,colors.black)
+  term.clear()
+  term.setCursorPos(1,1)
+end
